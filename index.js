@@ -122,6 +122,6 @@ function random(min, max) {
 }
 
 function randomReply() {
-  let rplyArr = ['幹你娘不要亂打好嗎？懂？'];
+  let rplyArr = ['幹你娘不要亂打好嗎？懂？',];
   return rplyArr[Math.floor((Math.random() * (rplyArr.length)) + 0)];
 }
