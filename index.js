@@ -1,128 +1,96 @@
 var express = require('express');
-var bodyParser = require('body-parser');
-var https = require('https');  
 var app = express();
 var bodyParser = require('body-parser');
+var crypto = require("crypto");
+var request = require('request');
+var async = require('async');
 
-var jsonParser = bodyParser.json();
+app.set('port', (process.env.PORT || 8000));
+// JSONの送信を許可
+app.use(bodyParser.urlencoded({
+    extended: true
+}));
+// JSONのパースを楽に（受信時）
+app.use(bodyParser.json());
 
-var options = {
-  host: 'api.line.me',
-  port: 443,
-  path: '/v2/bot/message/reply',
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'Authorization': 'Bearer w1F0tX1nyi/HIn5nK7uXMh5yi+m/s4LOKuEEWC8oRKcuwoO+JXpLiU/FCQjosIxk8IXwT06JfX4YLvjMI4gBwEx3253NvnXx5NZT4RuMQSbzji61uSCPCjn82PwxcLKp5oOx8vLql3awCVVgt1pEbAdB04t89/1O/w1cDnyilFU='
-  }
-}
-app.set('port', (process.env.PORT || 5000));
+app.post('/', function(req, res) {
+    async.waterfall([
+            function(callback) {
+                // リクエストがLINE Platformから送られてきたか確認する
+                if (!validate_signature(req.headers['x-line-signature'], req.body)) {
+                    return;
+                }
+                // テキストが送られてきた場合のみ返事をする
+                if ((req.body['events'][0]['type'] != 'message') || (req.body['events'][0]['message']['type'] != 'text')) {
+                    return;
+                }
 
-// views is directory for all template files
+                if (req.body['events'][0]['source']['type'] == 'user') {
+                    // ユーザIDでLINEのプロファイルを検索して、ユーザ名を取得する
+                    var user_id = req.body['events'][0]['source']['userId'];
+                    var get_profile_options = {
+                        url: 'https://api.line.me/v2/bot/profile/' + user_id,
+                        json: true,
+                        headers: {
+                            'Authorization': 'Bearer {Channel Access Token}'
+                        }
+                    };
+                    request.get(get_profile_options, function(error, response, body) {
+                        if (!error && response.statusCode == 200) {
+                            callback(body['displayName'] + 'さんから送られた文章の\n');
+//1対1の対応
+                        }
+                    });
+                } else if ('room' == req.body['events'][0]['source']['type']) {
+                    callback('みなさまから送られた文章の\n');
+//グループ対1の対応
+                }
+            },
+        ],
+        function(displayName) {
+            //ヘッダーを定義
+            var headers = {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer {Channel Access Token}',
+            };
 
-app.get('/', function(req, res) {
-//  res.send(parseInput(req.query.input));
-  res.send('Hello');
-});
+            // 送信データ作成
+            var data = {
+                'replyToken': req.body['events'][0]['replyToken'],
+                "messages": [{
+                    "type": "text",
+                    "text": displayName + '文字数は ' + textcount(req.body['events'][0]['message']['text']) + '文字です。'
+                }]
+            };
 
-app.post('/', jsonParser, function(req, res) {
-  let event = req.body.events[0];
-  let type = event.type;
-  let msgType = event.message.type;
-  let msg = event.message.text;
-  let rplyToken = event.replyToken;
+            //オプションを定義
+            var options = {
+                url: 'https://api.line.me/v2/bot/message/reply',
+                headers: headers,
+                json: true,
+                body: data
+            };
 
-  let rplyVal = null;
-  console.log(msg);
-  if (type == 'message' && msgType == 'text') {
-    try {
-      rplyVal = parseInput(rplyToken, msg); 
-    } 
-    catch(e) {
-      rplyVal = randomReply();
-    }
-  }
-
-  if (rplyVal) {
-    replyMsgToLine(rplyToken, rplyVal); 
-  } else {
-    console.log('Do not trigger'); 
-  }
-
-  res.send('ok');
+            request.post(options, function(error, response, body) {
+                if (!error && response.statusCode == 200) {
+                    console.log(body);
+                } else {
+                    console.log('error: ' + JSON.stringify(response));
+                }
+            });
+        }
+    );
 });
 
 app.listen(app.get('port'), function() {
-  console.log('Node app is running on port', app.get('port'));
+    console.log('Node app is running');
 });
 
-function replyMsgToLine(rplyToken, rplyVal) {
-  let rplyObj = {
-    replyToken: rplyToken,
-    messages: [
-      {
-        type: "text",
-        text: rplyVal
-      }
-    ]
-  }
-
-  let rplyJson = JSON.stringify(rplyObj); 
-  
-  var request = https.request(options, function(response) {
-    console.log('Status: ' + response.statusCode);
-    console.log('Headers: ' + JSON.stringify(response.headers));
-    response.setEncoding('utf8');
-    response.on('data', function(body) {
-      console.log(body); 
-    });
-  });
-  request.on('error', function(e) {
-    console.log('Request error: ' + e.message);
-  })
-  request.end(rplyJson);
+function textcount(body) {
+    return body.length;
 }
 
-function parseInput(rplyToken, inputStr) {
-  console.log('InputStr: ' + inputStr);
-  let msgSplitor = ' ';
-  let comSplitor = 'd';
-
-  let mainMsg = inputStr.split(msgSplitor);
-  let trigger = mainMsg[0];
-  console.log(trigger);
-  if (trigger != 'e04') return null;
-
-  _isNaN = function(obj) {
-    return isNaN(parseInt(obj));
-  }
-
-  let commandArr = mainMsg[1].split(comSplitor);
-  if (commandArr.length != 2 || _isNaN(commandArr[0]) || _isNaN(commandArr[1])) return randomReply();
-  let countOfNum = commandArr[0];
-  let randomRange = commandArr[1];
-  
-  let countStr = '';
-  let count = 0;
-  for (let idx = 1; idx <= countOfNum; idx ++) {
-    let temp = random(1, randomRange);
-    countStr = countStr + temp + '+';
-    count += temp; 
-  }
-  
-  if (countOfNum == 1) {
-    countStr = count;
-  } else {
-    countStr = countStr.substring(0, countStr.length - 1) + '=' + count;
-  }
-  return countStr;
-}
-
-function random(min, max) {
-  return Math.floor((Math.random() * max) + min);
-}
-
-function randomReply() {
-  let rplyArr = ['幹你娘不要亂打好嗎？懂？',];
-  return rplyArr[Math.floor((Math.random() * (rplyArr.length)) + 0)];
+// 署名検証
+function validate_signature(signature, body) {
+    return signature == crypto.createHmac('sha256', 'CHANNELL_SECRET').update(new Buffer(JSON.stringify(body), 'utf8')).digest('base64');
 }
